@@ -6,6 +6,7 @@ This repository contains thesis experiments for causal anomaly detection.
 
 - `PCMCI/PCMCI_robotic`
 - `GES/GES_robotic`
+- `CAM-UV/CAM_UV_robotic`
 
 ## Dataset
 
@@ -66,4 +67,11 @@ cd GES\GES_robotic
 python .\anomaly_detection_ges.py
 python .\anomaly_detection_ges_polynomial.py
 python .\anomaly_detection_ges_rbf.py
+```
+
+```powershell
+cd CAM-UV\CAM_UV_robotic
+python .\anomaly_detection.py
+python .\anomaly_detection_polynomial.py
+python .\anomaly_detection_rbf.py
 ```
