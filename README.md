@@ -49,6 +49,13 @@ The reported metrics are:
 | PCMCI | Polynomial degree 3 | 0.989 | 0.832 | 0.904 | 0.896 | 0.845 | 0.932 | 
 | PCMCI | RBF + Ridge | 0.727 | 0.894 | 0.802 | 0.740 | 0.854 | 0.927 | 
 
+**CAM-UV Results**
+| Algorithm | Variant | Precision | Recall | F1 | Accuracy | AUC-ROC | AUC-PR |
+|---|---|---:|---:|---:|---:|---:|---:|
+| CAM-UV | Linear / OLS | TBD | TBD | TBD | TBD | TBD | TBD |
+| CAM-UV | Polynomial degree 3 | TBD | TBD | TBD | TBD | TBD | TBD |
+| CAM-UV | RBF + Ridge | TBD | TBD | TBD | TBD | TBD | TBD |
+
 ### 2. Healthcare Domain (PTB-XL ECG Dataset)
 
 **GES Results**
@@ -58,6 +65,20 @@ The reported metrics are:
 | **Polynomial deg 3** (α=10) | 3.0σ | 100.00% | 81.25% | 89.66% | 85.58% | 0.9980 | 0.9995 |
 | **RBF Ridge** | 1.0σ | 100.00% | 99.80% | 99.90% | 99.85% | 0.9980 | 0.9995 |
 
+**PCMCI Results**
+| Algorithm | Variant | Precision | Recall | F1 | Accuracy | AUC-ROC | AUC-PR |
+|---|---|---:|---:|---:|---:|---:|---:|
+| PCMCI | Linear / OLS | TBD | TBD | TBD | TBD | TBD | TBD |
+| PCMCI | Polynomial degree 3 | TBD | TBD | TBD | TBD | TBD | TBD |
+| PCMCI | RBF + Ridge | TBD | TBD | TBD | TBD | TBD | TBD |
+
+**CAM-UV Results**
+| Algorithm | Variant | Precision | Recall | F1 | Accuracy | AUC-ROC | AUC-PR |
+|---|---|---:|---:|---:|---:|---:|---:|
+| CAM-UV | Linear / OLS | TBD | TBD | TBD | TBD | TBD | TBD |
+| CAM-UV | Polynomial degree 3 | TBD | TBD | TBD | TBD | TBD | TBD |
+| CAM-UV | RBF + Ridge | TBD | TBD | TBD | TBD | TBD | TBD |
+
 ### 3. Industrial Domain (TEP Dataset)
 
 **GES Results**
@@ -66,6 +87,20 @@ The reported metrics are:
 | **Linear / Ridge** (α=10) | 0.5σ | 99.30% | 99.69% | 99.50% | 99.00% | 0.9576 | 0.9997 |
 | **Polynomial deg 3** (α=10) | 0.5σ | 99.25% | 99.69% | 99.47% | 98.94% | 0.9965 | 1.0000 |
 | **RBF Ridge** (γ=0.2) | 0.5σ | 99.24% | 99.69% | 99.46% | 98.93% | 0.8901 | 0.9991 |
+
+**PCMCI Results**
+| Algorithm | Variant | Precision | Recall | F1 | Accuracy | AUC-ROC | AUC-PR |
+|---|---|---:|---:|---:|---:|---:|---:|
+| PCMCI | Linear / OLS | TBD | TBD | TBD | TBD | TBD | TBD |
+| PCMCI | Polynomial degree 3 | TBD | TBD | TBD | TBD | TBD | TBD |
+| PCMCI | RBF + Ridge | TBD | TBD | TBD | TBD | TBD | TBD |
+
+**CAM-UV Results**
+| Algorithm | Variant | Precision | Recall | F1 | Accuracy | AUC-ROC | AUC-PR |
+|---|---|---:|---:|---:|---:|---:|---:|
+| CAM-UV | Linear / OLS | TBD | TBD | TBD | TBD | TBD | TBD |
+| CAM-UV | Polynomial degree 3 | TBD | TBD | TBD | TBD | TBD | TBD |
+| CAM-UV | RBF + Ridge | TBD | TBD | TBD | TBD | TBD | TBD |
 
 ---
 
