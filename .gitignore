@@ -1,0 +1,32 @@
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyc
+*.pyo
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Large Datasets (GitHub blocks files > 100MB)
+*.RData
+
+# Logs and temp files
+*.tmp
+*.log
+logs/
+logs_topk_final/
+
+# System files
+.DS_Store
+Thumbs.db
+
+# Other
+.env
+.ipynb_checkpoints/
+nouse/
+old_ges/
+archive_legacy/
+*.bak

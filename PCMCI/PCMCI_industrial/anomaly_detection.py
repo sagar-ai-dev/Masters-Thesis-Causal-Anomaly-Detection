@@ -1,0 +1,449 @@
+"""
+==============================================================
+ Causal Discovery & Anomaly Detection (Linear Least-Squares Tigramite - Industrial / TEP)
+==============================================================
+
+Workflow:
+1. Data Loading
+2. Causal Model Learning (offline PCMCI)
+3. Offline Linear Least-Squares Coefficient Estimation
+4. Online Monitoring (moving-window linear coefficient updates)
+5. Anomaly Detection
+6. Metrics Computation
+
+Author: (Sagar)
+==============================================================
+"""
+
+# ================== IMPORTS ==================
+import os
+import numpy as np
+import pandas as pd
+import warnings
+from tigramite import data_processing as pp
+from tigramite.pcmci import PCMCI
+from tigramite.independence_tests.parcorr import ParCorr
+from scipy.stats import ConstantInputWarning
+from sklearn.metrics import accuracy_score, average_precision_score, roc_auc_score
+
+import matplotlib.pyplot as plt
+
+warnings.filterwarnings('ignore', category=ConstantInputWarning)
+
+# ================== GLOBAL CONFIG ==================
+ALPHA = 0.05
+TRAINING_FRAC = 0.7
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+PREFIX = os.path.join(BASE_DIR, "TEP")
+TASK = "tep"
+MAX_FREQ_COMPONENTS = 5
+
+NORMAL_FILE = "TEP_FaultFree_Training_run1.pkl"
+ATTACK_FILES = [f"TEP_Faulty_Testing_fault{i}.pkl" for i in range(1, 21)]
+
+# Anomaly detection tuning config
+DETECTION_THRESHOLD_MULTIPLIER = 0.4
+CAUSAL_STRENGTH_MULTIPLIER = 0.0
+CONSECUTIVE_K = 1
+RIDGE_ALPHA = 1.0
+RLS_LAMBDA = 0.995
+
+
+def _rls_update(x_vec: np.ndarray, y_t: float, w_prev: np.ndarray, P_prev: np.ndarray, lam: float):
+    """
+    Standard Recursive Least Squares (RLS) Update Step.
+    """
+    x = x_vec.reshape(-1)
+    e_t = float(y_t) - float(np.dot(x, w_prev))
+    Px = P_prev @ x
+    denom = float(lam + np.dot(x, Px))
+    g_t = Px / denom
+    w_new = w_prev + g_t * e_t
+    P_new = (P_prev - np.outer(g_t, Px)) / float(lam)
+    return w_new, P_new
+
+
+def compute_online_errors(data: np.ndarray, fine_coeffs: dict,
+                           causal_matrix: np.ndarray, indices: np.ndarray,
+                           alpha: float = RIDGE_ALPHA, rls_lambda: float = RLS_LAMBDA):
+    """
+    Recompute linear coefficients online sample-by-sample via RLS and compute deviations.
+    """
+    max_time = data.shape[0] - causal_matrix.shape[2]
+    unique_vars = np.unique(indices[1, :])
+    err = {}
+    norm_agg = np.zeros((max_time, len(unique_vars)))
+
+    w_state = {}
+    P_state = {}
+    var_prep = {}
+
+    for var in unique_vars:
+        w0 = fine_coeffs[var].copy()
+        P0 = np.eye(len(w0)) * (1.0 / alpha)
+        w_state[var] = w0
+        P_state[var] = P0
+
+        var_indices = [indices[:, k] for k in range(indices.shape[1]) if indices[1, k] == var]
+        var_indices.sort(key=lambda x: x[2])
+        var_indices = var_indices[:3]
+        max_delay = var_indices[-1][2]
+
+        stack = [data[max_delay - el[2]: max_time + max_delay - el[2], el[0]] for el in var_indices]
+        X = np.column_stack(stack)
+        X_with_intercept = np.column_stack([np.ones(X.shape[0]), X])
+        y = data[max_delay: max_time + max_delay, var]
+        var_prep[var] = (X_with_intercept, y)
+        err[var] = np.zeros((max_time, len(w0)))
+
+    for t in range(max_time):
+        for i, var in enumerate(unique_vars):
+            X_des, y = var_prep[var]
+            x_vec = X_des[t]
+            y_t = float(y[t])
+
+            w_prev = w_state[var]
+            P_prev = P_state[var]
+
+            w_new, P_new = _rls_update(x_vec, y_t, w_prev, P_prev, rls_lambda)
+            w_state[var] = w_new
+            P_state[var] = P_new
+
+            err[var][t, :] = w_new - fine_coeffs[var]
+            norm_agg[t, i] = np.linalg.norm(err[var][t, :])
+
+    return err, norm_agg
+
+
+# ================================================================
+#                         DATA LOADING
+# ================================================================
+def read_data(path: str, task: str) -> pd.DataFrame:
+    """
+    Load CSV or PKL data, handle column naming and index.
+    For TEP, standardizes feature columns (XMEAS_1..41, XMV_1..11).
+    """
+    if path.endswith(".pkl"):
+        df = pd.read_pickle(path)
+        if len(df) > 960:
+            df = df.iloc[:960]
+    else:
+        df = pd.read_csv(path, delimiter="," if task == "pepper" else ";")
+
+    if task == "tep":
+        df.columns = [str(c).upper() for c in df.columns]
+        feature_cols = [f"XMEAS_{i}" for i in range(1, 42)] + [f"XMV_{j}" for j in range(1, 12)]
+        available_cols = [c for c in feature_cols if c in df.columns]
+        if available_cols:
+            df = df[available_cols]
+        if "SAMPLE" in df.columns:
+            df.set_index("SAMPLE", inplace=True)
+    elif task == "pepper":
+        if "timestamp" in df.columns:
+            df["Timestamp"] = df["timestamp"]
+            df.set_index("Timestamp", inplace=True)
+            df.drop(columns=["timestamp"], inplace=True)
+        elif "Timestamp" in df.columns:
+            df.set_index("Timestamp", inplace=True)
+    else:
+        if " Timestamp" in df.columns:
+            df["Timestamp"] = pd.to_datetime(
+                df[" Timestamp"].str.strip(), format="%d/%m/%Y %I:%M:%S %p"
+            )
+            df.set_index("Timestamp", inplace=True)
+            df.drop(columns=[" Timestamp"], inplace=True)
+
+    return df
+
+
+# ================================================================
+#                     LEARN CAUSAL MODEL
+# ================================================================
+def learn_causal_model(normal_csv_path: str, save_path: str):
+    """
+    Learn the causal graph using PCMCI.
+    Tau_max is automatically computed from the dominant frequency.
+
+    Steps:
+        1) Load normal data
+        2) Filter top frequency components
+        3) Remove near-constant variables
+        4) Compute tau_max from max frequency
+        5) Run PCMCI
+        6) Save the model
+    """
+    print("Learning causal model...")
+
+    df = read_data(normal_csv_path, TASK)
+    normal_data = pp.DataFrame(np.nan_to_num(df.values))
+    # restrict to training_frac
+    normal_data.values[0] = normal_data.values[0][:int(TRAINING_FRAC * np.shape(normal_data.values[0])[0]), :]
+
+    frequencies = []
+    for index in range(np.shape(normal_data.values[0])[1]):
+        # The signal is made of continuous variables.
+        if any([el for el in normal_data.values[0][:, index] if int(el) != el]):
+            w = np.fft.fft(normal_data.values[0][:, index])
+            freqs = np.fft.fftfreq(len(w))
+            mods = abs(w)
+            max_indices = np.argsort(mods)[::-1][:MAX_FREQ_COMPONENTS]
+            main_freq = []
+            for i in max_indices:
+                freq = freqs[i]
+                main_freq.append(freq)
+            frequencies += main_freq
+
+    sorted_freq = np.sort([el for el in frequencies if el > 0])[::-1]
+    for freq in sorted_freq:
+        if len([fr for fr in sorted_freq if fr < freq]) / len(sorted_freq) < 0.95:
+            max_freq = freq
+            sorted_freq = [s for s in sorted_freq if s <= max_freq]
+            break
+
+    subsample = max(1, int(np.floor(1 / 10 / max_freq)))
+    normal_data.values[0] = normal_data.values[0][::max(1, subsample), :]
+    nonconst = [idx for idx in range(np.shape(normal_data.values[0])[1]) if np.std(normal_data.values[0][:, idx]) > 0.01 * np.mean(normal_data.values[0][:, idx])]
+    nonconst_data = normal_data.values[0][:, nonconst]
+    for j in range(np.shape(nonconst_data)[1]):
+        nonconst_data[:, j] /= (np.max(nonconst_data[:, j]) - np.min(nonconst_data[:, j])) + np.min(nonconst_data[:, j])
+    print(np.shape(nonconst_data))
+
+    # Evaluate links
+    tau_max = int(np.floor(max_freq / np.mean(np.unique(sorted_freq))))
+    print(tau_max)
+
+    # Run PCMCI
+    dataframe = pp.DataFrame(nonconst_data)
+    pcmci = PCMCI(dataframe=dataframe, cond_ind_test=ParCorr(), verbosity=0)
+    results = pcmci.run_pcmci(tau_max=tau_max, pc_alpha=ALPHA)
+
+    # Save model for reuse
+    np.savez(save_path,
+             val_matrix=results["val_matrix"],
+             p_matrix=results["p_matrix"],
+             var=df.columns,
+             subsample=subsample,
+             nonconst=nonconst)
+    print(f"Saved causal model to {save_path}")
+    return results, subsample, nonconst, tau_max
+
+
+# ================================================================
+#       OFFLINE LINEAR LEAST-SQUARES COEFFICIENT FITTING
+# ================================================================
+def fit_normal_coeffs(normal_data: np.ndarray, causal_matrix: np.ndarray):
+    """
+    Compute offline (baseline) linear coefficients for each variable using least squares.
+
+    Visual:
+        X_t = [parents with lags] --> np.linalg.lstsq --> linear regression
+        -----------------------------------------------------------
+        offline coefficients: learned on normal training data
+    """
+    indices = np.array(np.where(causal_matrix != 0))
+    fine_coeffs = {}
+
+    for var in np.unique(indices[1, :]):
+        var_indices = [indices[:, k] for k in range(indices.shape[1]) if indices[1, k] == var]
+        var_indices.sort(key=lambda x: x[2])
+        max_delay = var_indices[-1][2]
+        # Final selected model uses the first/top 3 parent-lag causal links.
+        var_indices = var_indices[:3]
+
+        # Build parent-lag design matrix.
+        stack = [normal_data[max_delay - el[2]: len(normal_data) - el[2], el[0]]
+                 for el in var_indices]
+        X = np.column_stack(stack)
+        y = normal_data[max_delay:, var]
+
+        # Add intercept column
+        X_with_intercept = np.column_stack([np.ones(X.shape[0]), X])
+        
+        from sklearn.linear_model import Ridge
+        model = Ridge(alpha=1.0, fit_intercept=False) # X already has intercept
+        model.fit(X_with_intercept, y)
+        fine_coeffs[var] = model.coef_
+
+    return fine_coeffs, indices
+
+
+
+
+
+def detect_anomalies(err_normal, err_attack, normal_data_len, normal):
+    """
+    Flag anomalies if online coefficients deviate significantly from offline baseline.
+
+    Threshold = DETECTION_THRESHOLD_MULTIPLIER * norm of offline deviations.
+    """
+    indices_error = []
+    for var in err_attack.keys():
+        for j in range(err_attack[var].shape[1]):
+            thresh = DETECTION_THRESHOLD_MULTIPLIER * np.linalg.norm(err_normal[var][:normal_data_len, j])
+            if not normal:
+                indices_error += list(np.where(abs(err_attack[var][:, j]) > thresh)[0])
+            else:
+                indices_error += list(np.where(abs(err_attack[var][normal_data_len:, j]) > thresh)[0])
+    return len(np.unique(indices_error))
+
+
+def score_anomaly_timeline(err_normal, err_attack, normal_data_len, normal):
+    """
+    Convert coefficient-drift errors into per-time predictions and scores.
+
+    The continuous score is the maximum normalized coefficient drift across all
+    monitored variables and coefficients. A score above 1.0 follows the same
+    threshold rule used by detect_anomalies().
+    """
+    if normal:
+        start = normal_data_len
+        max_time = min(
+            (err_attack[var].shape[0] - start for var in err_attack.keys()),
+            default=0,
+        )
+    else:
+        start = 0
+        max_time = min((err_attack[var].shape[0] for var in err_attack.keys()), default=0)
+
+    scores = np.zeros(max_time, dtype=float)
+    for var in err_attack.keys():
+        for j in range(err_attack[var].shape[1]):
+            thresh = DETECTION_THRESHOLD_MULTIPLIER * np.linalg.norm(
+                err_normal[var][:normal_data_len, j]
+            )
+            thresh = max(float(thresh), np.finfo(float).eps)
+            values = np.abs(err_attack[var][start:start + max_time, j]) / thresh
+            scores = np.maximum(scores, values)
+
+    predictions = (scores > 1.0).astype(int)
+    return predictions, scores
+
+
+def compute_extended_metrics(normal_predictions, normal_scores, attack_predictions, attack_scores):
+    """
+    Compute Accuracy, AUC-ROC, and AUC-PR without changing Precision/Recall/F1.
+
+    AUC uses the continuous coefficient-drift scores before thresholding.
+    """
+    y_true = np.concatenate([
+        np.zeros(len(normal_predictions), dtype=int),
+        np.ones(sum(len(pred) for pred in attack_predictions), dtype=int),
+    ])
+    y_pred = np.concatenate([normal_predictions] + attack_predictions)
+    y_score = np.concatenate([normal_scores] + attack_scores)
+
+    accuracy = accuracy_score(y_true, y_pred)
+    try:
+        auc_roc = roc_auc_score(y_true, y_score)
+    except ValueError:
+        auc_roc = np.nan
+    try:
+        auc_pr = average_precision_score(y_true, y_score)
+    except ValueError:
+        auc_pr = np.nan
+    return accuracy, auc_roc, auc_pr
+
+
+# ================================================================
+#                         MAIN PIPELINE
+# ================================================================
+def main():
+    print(f"\n========== TASK: {TASK.upper()} ==========")
+        
+    causal_path = os.path.join(PREFIX, f"{TASK}_normal.npz")
+    print(f"Causal model path: {causal_path}")
+
+    # 1) Learn or load causal model
+    if not os.path.exists(causal_path):
+        learn_causal_model(os.path.join(PREFIX, NORMAL_FILE), causal_path)
+    else:
+        print("Causal model found, loading...")
+
+    f = np.load(causal_path, allow_pickle=True)
+    val_matrix, p_matrix = f["val_matrix"], f["p_matrix"]
+    subsample, nonconst = int(f["subsample"]), f["nonconst"]
+
+    normal_matrix = val_matrix * (p_matrix < ALPHA) * (abs(val_matrix) > CAUSAL_STRENGTH_MULTIPLIER * np.mean(abs(val_matrix)))
+
+    # 2) Load normal data
+    normal_df = read_data(os.path.join(PREFIX, NORMAL_FILE), TASK)
+    normal_data = np.nan_to_num(normal_df.values[:int(TRAINING_FRAC * len(normal_df))][::subsample, nonconst])
+    normal_data_full = np.nan_to_num(normal_df.values[::subsample, nonconst])
+
+    # 3) Offline linear least-squares coefficients
+    fine_coeffs, indices = fit_normal_coeffs(normal_data, normal_matrix)
+
+    # 4) Online deviations for normal reference
+    err_normal, norm_agg_normal = compute_online_errors(normal_data_full, fine_coeffs, normal_matrix, indices)
+
+    _ = norm_agg_normal
+
+    # 5) Load and detect anomalies
+    attack_paths = [os.path.join(PREFIX, f) for f in ATTACK_FILES]
+    attack_dfs = [read_data(p, TASK) for p in attack_paths]
+
+    tpos, fpos, fneg = [], [], []
+    attack_predictions, attack_scores = [], []
+
+    # False positives
+    fpos.append(detect_anomalies(err_normal, err_normal, len(normal_data), normal=True))
+    normal_predictions, normal_scores = score_anomaly_timeline(
+        err_normal, err_normal, len(normal_data), normal=True
+    )
+
+    norm_agg_attacks = []
+    attack_names = []
+
+    for path, df_attack in zip(attack_paths, attack_dfs):
+        attack_name = os.path.basename(path)
+        attack_names.append(attack_name)
+        print(f"\n--- Analyzing anomaly: {attack_name} ---")
+
+        attack_data = np.nan_to_num(df_attack.values[::subsample, nonconst])
+        err_attack, norm_agg_attack = compute_online_errors(attack_data, fine_coeffs, normal_matrix, indices)
+        norm_agg_attacks.append(norm_agg_attack)
+
+        tp_count = detect_anomalies(err_normal, err_attack, len(normal_data), normal=False)
+        tpos.append(tp_count)
+        fneg.append(attack_data.shape[0] - tp_count)
+        attack_prediction, attack_score = score_anomaly_timeline(
+            err_normal, err_attack, len(normal_data), normal=False
+        )
+        if len(attack_prediction) < attack_data.shape[0]:
+            pad_len = attack_data.shape[0] - len(attack_prediction)
+            attack_prediction = np.concatenate([np.zeros(pad_len, dtype=int), attack_prediction])
+            attack_score = np.concatenate([np.zeros(pad_len, dtype=float), attack_score])
+        attack_predictions.append(attack_prediction)
+        attack_scores.append(attack_score)
+
+    # 6) Metrics & Reporting via Shared Helper
+    import reporting_helper
+
+    attack_scores_dict = dict(zip(attack_names, attack_scores))
+    attack_labels_dict = {}
+    target_wise_residuals_by_file = dict(zip(attack_names, norm_agg_attacks))
+
+    for name, attack_df in zip(attack_names, attack_dfs):
+        data_matrix = np.nan_to_num(attack_df.values[::subsample, nonconst])
+        attack_labels_dict[name] = np.ones(data_matrix.shape[0])
+
+    output_dir = os.path.join(BASE_DIR, "outputs")
+    os.makedirs(output_dir, exist_ok=True)
+    reporting_helper.generate_plots_and_reports(
+        output_dir=output_dir,
+        model_variant="Linear / OLS",
+        model_name="PCMCI",
+        normal_scores=normal_scores,
+        attack_scores_by_file=attack_scores_dict,
+        threshold=1.0,
+        var_names=f["var"][nonconst].tolist(),
+        target_indices=np.unique(indices[1, :]).tolist(),
+        directed_edges=[], 
+        target_wise_residuals_by_file=target_wise_residuals_by_file,
+        attack_labels_by_file=attack_labels_dict,
+        dataset_name="Industrial (TEP)"
+    )
+
+
+if __name__ == "__main__":
+    main()

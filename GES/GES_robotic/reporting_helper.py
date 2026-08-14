@@ -1,0 +1,197 @@
+"""
+==============================================================
+ Reporting Helper Module (All Domains - TS-CAM-UV)
+==============================================================
+
+Provides helper utilities for per-class metrics reporting and 
+professor-approved Linear Red Staircase Bar Charts (Feature Importance)
+for time-series features. All metrics are exhaustively calculated.
+"""
+
+import math
+import os
+import numpy as np
+import matplotlib.pyplot as plt
+from sklearn.metrics import accuracy_score, roc_auc_score, average_precision_score
+
+def plot_feature_importance_subplots(
+    norm_agg_list,
+    indices,
+    nonconst,
+    var_names,
+    attack_names,
+    output_filename="top_anomalous_variables.png"
+):
+    """
+    Professor-approved Linear Red Staircase Bar Charts (Feature Importance).
+    REMOVED log-scale to ensure true proportional representation.
+    """
+    n_attacks = len(norm_agg_list)
+    if n_attacks == 0:
+        return
+
+    # Create a dynamic grid (max 4 columns wide)
+    cols = min(4, n_attacks)
+    rows = math.ceil(n_attacks / cols)
+    
+    fig, axes = plt.subplots(rows, cols, figsize=(7 * cols, 5 * rows), squeeze=False)
+    plt.suptitle("Top Anomalous Variables per Attack", fontsize=18, fontweight='bold')
+
+    for i, norm_agg_attack in enumerate(norm_agg_list):
+        r = i // cols
+        c = i % cols
+        ax = axes[r, c]
+        
+        # Calculate L2 Norm directly for ALL provided features
+        num_vars = norm_agg_attack.shape[1]
+        dep_vals = {}
+        for j in range(num_vars):
+            if indices is not None and j < len(indices) and indices[j] < len(var_names):
+                v_name = var_names[indices[j]]
+            else:
+                v_name = var_names[j] if j < len(var_names) else f"Var_{j}"
+            dep_vals[v_name] = np.linalg.norm(norm_agg_attack[:, j])
+
+        # Sort variables from highest to lowest error
+        dep_sorted = dict(sorted(dep_vals.items(), key=lambda x: x[1], reverse=True))
+        
+        # Limit to top 15 for readability
+        top_n = min(15, len(dep_sorted)) 
+        top_items = list(dep_sorted.items())[:top_n]
+        if not top_items:
+            continue
+        top_vars, top_vals = zip(*top_items)
+
+        # Plot the clean, linear bar chart
+        ax.bar(top_vars, top_vals, color='salmon', edgecolor='white', linewidth=1)
+        
+        # STRICTLY LINEAR SCALE (Log scale is removed)
+        
+        ax.set_xticks(range(len(top_vars)))
+        ax.set_xticklabels(top_vars, rotation=45, ha='right', fontsize=9)
+        ax.set_ylabel("Aggregated Error (L2 Norm)", fontsize=10)
+        ax.set_title(attack_names[i], fontsize=12)
+
+    # Clean up empty subplots
+    for i in range(n_attacks, rows * cols):
+        fig.delaxes(axes[i // cols, i % cols])
+
+    plt.tight_layout()
+    plt.subplots_adjust(top=0.92)
+    if os.path.dirname(output_filename):
+        os.makedirs(os.path.dirname(output_filename), exist_ok=True)
+    plt.savefig(output_filename, dpi=300, bbox_inches="tight")
+    plt.close()
+
+
+def generate_plots_and_reports(
+    output_dir: str,
+    model_variant: str,
+    model_name: str,
+    normal_scores: np.ndarray,
+    attack_scores_by_file: dict,
+    threshold: float,
+    var_names: list,
+    target_indices: list,
+    directed_edges: list,
+    target_wise_residuals_by_file: dict,
+    attack_labels_by_file: dict,
+    dataset_name: str = "Dataset"
+):
+    os.makedirs(output_dir, exist_ok=True)
+    print(f"\n" + "="*80)
+    print(f" THESIS RESULTS EXPORT: {dataset_name} — {model_name} ({model_variant})")
+    print(f" Threshold Applied: {threshold:.4f}")
+    print("="*80)
+
+    # Calculate Normal Baseline Stats (TN and FP)
+    norm_pred = (normal_scores > threshold).astype(int)
+    fp_normal = int(np.sum(norm_pred))
+    tn_normal = len(norm_pred) - fp_normal
+    
+    all_y_true = list(np.zeros(len(normal_scores), dtype=int))
+    all_y_pred = list(norm_pred)
+    all_y_score = list(normal_scores)
+
+    total_tp, total_fp, total_fn, total_tn = 0, fp_normal, 0, tn_normal
+
+    print("\n--- PER-CLASS METRICS (INDIVIDUAL FAULTS) ---")
+    for file_name, attack_scores in attack_scores_by_file.items():
+        attack_pred = (attack_scores > threshold).astype(int)
+        attack_true = np.ones(len(attack_scores), dtype=int)
+
+        tp = int(np.sum(attack_pred))
+        fn = len(attack_pred) - tp
+        fp = fp_normal
+        tn = tn_normal
+
+        total_tp += tp
+        total_fn += fn
+
+        # Class-level metrics calculation
+        acc = (tp + tn) / (tp + tn + fp + fn) if (tp + tn + fp + fn) > 0 else 0.0
+        precision = tp / (tp + fp) if (tp + fp) > 0 else 0.0
+        recall = tp / (tp + fn) if (tp + fn) > 0 else 0.0
+        f1 = 2 * precision * recall / (precision + recall) if (precision + recall) > 0 else 0.0
+
+        print(f"[{file_name}]")
+        print(f"  Confusion Matrix : TP={tp}, FP={fp}, TN={tn}, FN={fn}")
+        print(f"  Accuracy         : {acc:.4f}")
+        print(f"  Precision        : {precision:.4f}")
+        print(f"  Recall           : {recall:.4f}")
+        print(f"  F1 Score         : {f1:.4f}\n")
+
+        all_y_true.extend(attack_true)
+        all_y_pred.extend(attack_pred)
+        all_y_score.extend(attack_scores)
+
+    # Overall Global Metrics Calculation
+    all_y_true = np.array(all_y_true)
+    all_y_pred = np.array(all_y_pred)
+    all_y_score = np.array(all_y_score)
+
+    acc_global = accuracy_score(all_y_true, all_y_pred)
+    prec_global = total_tp / (total_tp + total_fp) if (total_tp + total_fp) > 0 else 0.0
+    rec_global = total_tp / (total_tp + total_fn) if (total_tp + total_fn) > 0 else 0.0
+    f1_global = 2 * prec_global * rec_global / (prec_global + rec_global) if (prec_global + rec_global) > 0 else 0.0
+
+    try:
+        auc_roc = roc_auc_score(all_y_true, all_y_score)
+    except ValueError:
+        auc_roc = np.nan
+    try:
+        auc_pr = average_precision_score(all_y_true, all_y_score)
+    except ValueError:
+        auc_pr = np.nan
+
+    print("-" * 80)
+    print(" *** EXHAUSTIVE GLOBAL AGGREGATE METRICS (FOR THESIS TABLE) ***")
+    print("-" * 80)
+    print(f" Total True Positives (TP)  : {total_tp}")
+    print(f" Total False Positives (FP) : {total_fp}")
+    print(f" Total True Negatives (TN)  : {total_tn}")
+    print(f" Total False Negatives (FN) : {total_fn}")
+    print("-" * 80)
+    print(f" Overall Accuracy           : {acc_global:.4f}")
+    print(f" Overall Precision          : {prec_global:.4f}")
+    print(f" Overall Recall             : {rec_global:.4f}")
+    print(f" Overall F1 Score           : {f1_global:.4f}")
+    print(f" Overall AUC-ROC            : {auc_roc:.4f}")
+    print(f" Overall AUC-PR             : {auc_pr:.4f}")
+    print("=" * 80 + "\n")
+
+    # Plotting Output
+    norm_agg_list = list(target_wise_residuals_by_file.values())
+    attack_names = list(target_wise_residuals_by_file.keys())
+    safe_variant_name = model_variant.lower().replace(" / ", "_").replace(" ", "_")
+    output_plot_path = os.path.join(output_dir, f"{safe_variant_name}_top_anomalous_variables.png")
+
+    plot_feature_importance_subplots(
+        norm_agg_list=norm_agg_list,
+        indices=target_indices,
+        nonconst=list(range(len(var_names))),
+        var_names=var_names,
+        attack_names=attack_names,
+        output_filename=output_plot_path
+    )
+    print(f"Saved Linear Staircase Visualizations to: {output_plot_path}")
