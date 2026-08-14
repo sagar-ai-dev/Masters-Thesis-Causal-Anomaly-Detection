@@ -12,11 +12,11 @@ This repository contains thesis experiments for causal anomaly detection.
 
 Dataset: PEPPER robotics anomaly-detection dataset.
 
-Dataset files are included because no copied file is over 100 MB.
+Large dataset files are tracked with Git LFS so the full experiment folders can stay in the repository.
 
 ## Downstream Regression Variants
 
-Both algorithms are evaluated using three downstream regression variants:
+All completed robotics experiments are evaluated using three downstream regression variants:
 
 - Linear / OLS
 - Polynomial degree 3
