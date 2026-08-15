@@ -18,12 +18,8 @@ python anomaly_detection_rbf.py
 
 ## Final Results
 
-| Algorithm | Variant | Precision | Recall | F1 | Accuracy | AUC-ROC | AUC-PR | Status |
-|---|---|---:|---:|---:|---:|---:|---:|---|
-| CAM-UV | Linear / OLS | TBD | TBD | TBD | TBD | TBD | TBD | Comparison |
-| CAM-UV | Polynomial degree 3 | TBD | TBD | TBD | TBD | TBD | TBD | Comparison |
-| CAM-UV | RBF + Ridge | TBD | TBD | TBD | TBD | TBD | TBD | Comparison |
+Final validated CAM-UV robotics metrics are pending. The implementation scripts and generated explainability plots are included, but this folder does not currently contain a locked final metrics table.
 
 AUC-ROC and AUC-PR are computed from continuous anomaly scores before thresholding. Precision, Recall, F1, and Accuracy are computed from thresholded anomaly detections.
 
-Dataset files are included because no copied file is over 100 MB.
+Large dataset files are tracked with Git LFS where needed.

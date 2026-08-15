@@ -62,6 +62,20 @@ def plot_feature_importance_subplots(
             continue
         top_vars, top_vals = zip(*top_items)
 
+        csv_path = os.path.join(os.path.dirname(output_filename), "explainability_top_features.csv")
+        csv_exists = os.path.isfile(csv_path)
+        with open(csv_path, 'a', newline='') as csvfile:
+            import csv
+            writer = csv.writer(csvfile)
+            if not csv_exists:
+                writer.writerow(['Dataset', 'Fault Name', 'Top Variable 1', 'Top Variable 2', 'Top Variable 3'])
+            
+            dataset_name = "Healthcare" if "healthcare" in output_filename.lower() else "Industrial"
+            tv = list(top_vars)
+            while len(tv) < 3:
+                tv.append("N/A")
+            writer.writerow([dataset_name, attack_names[i], tv[0], tv[1], tv[2]])
+
         # Plot the clean, linear bar chart
         ax.bar(top_vars, top_vals, color='salmon', edgecolor='white', linewidth=1)
         

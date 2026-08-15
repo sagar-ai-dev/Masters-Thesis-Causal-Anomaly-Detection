@@ -1,0 +1,21 @@
+Dataset,Fault Name,Top Variable 1,Top Variable 2,Top Variable 3
+Industrial,TEP_Faulty_Testing_fault1.pkl,XMEAS_19,XMV_3,XMV_6
+Industrial,TEP_Faulty_Testing_fault2.pkl,XMV_6,XMV_3,XMV_7
+Industrial,TEP_Faulty_Testing_fault3.pkl,XMV_6,XMV_3,XMV_7
+Industrial,TEP_Faulty_Testing_fault4.pkl,XMV_6,XMV_3,XMV_7
+Industrial,TEP_Faulty_Testing_fault5.pkl,XMV_6,XMV_7,XMV_3
+Industrial,TEP_Faulty_Testing_fault6.pkl,XMV_11,XMV_3,XMV_5
+Industrial,TEP_Faulty_Testing_fault7.pkl,XMEAS_19,XMV_6,XMV_7
+Industrial,TEP_Faulty_Testing_fault8.pkl,XMEAS_19,XMV_6,XMV_5
+Industrial,TEP_Faulty_Testing_fault9.pkl,XMV_6,XMV_3,XMV_7
+Industrial,TEP_Faulty_Testing_fault10.pkl,XMV_6,XMV_3,XMV_7
+Industrial,TEP_Faulty_Testing_fault11.pkl,XMV_6,XMV_3,XMV_7
+Industrial,TEP_Faulty_Testing_fault12.pkl,XMV_5,XMV_4,XMEAS_19
+Industrial,TEP_Faulty_Testing_fault13.pkl,XMEAS_19,XMV_6,XMV_5
+Industrial,TEP_Faulty_Testing_fault14.pkl,XMV_10,XMV_6,XMV_3
+Industrial,TEP_Faulty_Testing_fault15.pkl,XMV_6,XMV_3,XMV_7
+Industrial,TEP_Faulty_Testing_fault16.pkl,XMEAS_19,XMV_6,XMV_3
+Industrial,TEP_Faulty_Testing_fault17.pkl,XMV_6,XMV_3,XMV_7
+Industrial,TEP_Faulty_Testing_fault18.pkl,XMEAS_19,XMV_4,XMV_9
+Industrial,TEP_Faulty_Testing_fault19.pkl,XMEAS_19,XMV_6,XMV_3
+Industrial,TEP_Faulty_Testing_fault20.pkl,XMV_6,XMV_3,XMV_7
